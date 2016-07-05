@@ -42,6 +42,7 @@ class EDD_Braintree_Dropin {
 	 * Get object instance
 	 *
 	 * @since 1.0.0
+	 *
 	 * @return object
 	 */
 	public static function get_instance() {
@@ -63,16 +64,106 @@ class EDD_Braintree_Dropin {
 			return false;
 		}
 
-		$this->merchant_id         = edd_get_option( 'edd_raintree_dropin_merchant_id', '' );
-		$this->merchant_account_id = edd_get_option( 'edd_raintree_dropin_merchant_account_id', '' );
-		$this->private_key         = edd_get_option( 'edd_raintree_dropin_private_key', '' );
-		$this->public_key          = edd_get_option( 'edd_raintree_dropin_public_key', '' );
+		add_filter( 'edd_payment_gateways', array( $this, 'register_gateway') );
+		add_filter( 'edd_settings_gateways', array( $this, 'add_settings' ) );
+		add_filter( 'edd_settings_sections_gateways', array( $this, 'settings_section' ) );
+
+		$this->merchant_id         = edd_get_option( 'edd_braintree_dropin_merchant_id', '' );
+		$this->merchant_account_id = edd_get_option( 'edd_braintree_dropin_merchant_account_id', '' );
+		$this->public_key          = edd_get_option( 'edd_braintree_dropin_public_key', '' );
+		$this->private_key         = edd_get_option( 'edd_braintree_dropin_private_key', '' );
+	}
+
+	/**
+	 * Register "edd_braintree_dropin" gateway
+	 *
+	 * @param array $gateways
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function register_gateway( $gateways ) {
+
+		$gateways['edd_braintree_dropin'] = array(
+				'admin_label'    => 'Braintree Drop-In',
+				'checkout_label' => __( 'Credit Card', EDD_BRAINTREE_DROPIN_DOMAIN )
+			);
+
+		return $gateways;
+	}
+
+	/**
+	 * Add EDD Braintree Settings
+	 *
+	 * @param array $settings
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function add_settings( $settings ) {
+
+		return array_merge( $settings, array(
+				'braintree_dropin' => array(
+					array(
+						'id'   => 'edd_braintree_dropin_header',
+						'name' => '<strong>' . __( 'Braintree Settings', EDD_BRAINTREE_DROPIN_DOMAIN ) . '</strong>',
+						'desc' => __( 'Configure Braintree payment gateway', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'header'
+					),
+					array(
+						'id'   => 'edd_braintree_dropin_merchant_id',
+						'name' => __( 'Merchant ID', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'desc' => __( 'Enter your Merchant ID.', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'text',
+						'size' => 'regular',
+					),
+					array(
+						'id'   => 'edd_braintree_dropin_merchant_account_id',
+						'name' => __( 'Merchant Account ID', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'desc' => __( 'Enter your Merchant Account ID.', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'text',
+						'size' => 'regular',
+					),
+					array(
+						'id'   => 'edd_braintree_dropin_public_key',
+						'name' => __( 'Public Key', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'desc' => __( 'Enter your Public Key.', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'text',
+						'size' => 'regular',
+					),
+					array(
+						'id'   => 'edd_braintree_dropin_private_key',
+						'name' => __( 'Private Key', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'desc' => __( 'Enter your Private Key.', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'text',
+						'size' => 'regular',
+					)
+				)
+			)
+		);
+	}
+
+	/**
+	 * Add EDD Settings Section
+	 *
+	 * @param array $sections
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function settings_section( $sections ) {
+		$sections['braintree_dropin'] = __( 'Braintree Drop-In', EDD_BRAINTREE_DROPIN_DOMAIN );
+		return $sections;
 	}
 
 	/**
 	 * Check for required plugins and versions
 	 *
 	 * @since 1.0.0
+	 *
 	 * @return bool
 	 */
 	private function check_requirements() {
@@ -86,12 +177,15 @@ class EDD_Braintree_Dropin {
 			add_action( 'admin_notices', array( $this, 'edd_notice' ) );
 			return false;
 		}
+
+		return true;
 	}
 
 	/**
 	 * Braintree WP version notice
 	 *
 	 * @since 1.0.0
+	 *
 	 * @return void
 	 */
 	public function edd_notice() { ?>
@@ -105,6 +199,7 @@ class EDD_Braintree_Dropin {
 	 * Braintree WP version notice
 	 *
 	 * @since 1.0.0
+	 *
 	 * @return void
 	 */
 	public function wp_notice() { ?>
