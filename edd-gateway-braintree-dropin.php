@@ -29,8 +29,6 @@ if ( !defined('ABSPATH') ) exit;
   */
 define('EDD_BRAINTREE_DROPIN_DOMAIN', 'edd-braintree-dropin');
 
-
-
 class EDD_Braintree_Dropin {
 
 	private static $instance;
@@ -120,5 +118,4 @@ class EDD_Braintree_Dropin {
 function edd_braintree_dropin_load_plugin() {
 	EDD_Braintree_Dropin::get_instance();
 }
-
 add_action( 'plugins_loaded', 'edd_braintree_dropin_load_plugin' );
