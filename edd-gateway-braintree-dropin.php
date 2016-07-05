@@ -24,10 +24,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 // Exit if accessed directly
 if ( !defined('ABSPATH') ) exit;
 
-/**
-  * Define some variables
-  */
+require_once __DIR__ . '/braintree/lib/autoload.php';
+
+// Define some variables
 define('EDD_BRAINTREE_DROPIN_DOMAIN', 'edd-braintree-dropin');
+define('EDD_BRAINTREE_DROPIN_GATEWAY_ID', 'braintree_dropin');
 
 class EDD_Braintree_Dropin {
 
@@ -72,10 +73,48 @@ class EDD_Braintree_Dropin {
 		$this->merchant_account_id = edd_get_option( 'edd_braintree_dropin_merchant_account_id', '' );
 		$this->public_key          = edd_get_option( 'edd_braintree_dropin_public_key', '' );
 		$this->private_key         = edd_get_option( 'edd_braintree_dropin_private_key', '' );
+
+		if ( edd_is_gateway_active(EDD_BRAINTREE_DROPIN_GATEWAY_ID) ) {
+			add_action( 'edd_' . EDD_BRAINTREE_DROPIN_GATEWAY_ID . '_cc_form', array( $this, 'payment_form' ) );
+			add_action( 'edd_gateway_' . EDD_BRAINTREE_DROPIN_GATEWAY_ID, array( $this, 'process_payment' ) );
+			add_action( 'wp_enqueue_scripts', array( $this, 'scripts' ) );
+		}
 	}
 
 	/**
-	 * Register "edd_braintree_dropin" gateway
+	 * Process Payment
+	 *
+	 * @param $purchase_data
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return void
+	 */
+	public function process_payment( $purchase_data ) {
+		echo '<pre>';
+		var_dump( $purchase_data );
+		die();
+	}
+
+	/**
+	 * Payment Form
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return void
+	 */
+	public function payment_form() {
+		Braintree_Configuration::environment( edd_is_test_mode() ? 'sandbox' : 'production' );
+		Braintree_Configuration::merchantId( $this->merchant_id );
+		Braintree_Configuration::publicKey( $this->public_key );
+		Braintree_Configuration::privateKey( $this->private_key );
+
+		include __DIR__ . '/templates/checkout.php';
+		// edd_get_cc_form();
+	}
+
+	/**
+	 * Register "braintree_dropin" gateway
 	 *
 	 * @param array $gateways
 	 *
@@ -85,7 +124,7 @@ class EDD_Braintree_Dropin {
 	 */
 	public function register_gateway( $gateways ) {
 
-		$gateways['edd_braintree_dropin'] = array(
+		$gateways[EDD_BRAINTREE_DROPIN_GATEWAY_ID] = array(
 				'admin_label'    => 'Braintree Drop-In',
 				'checkout_label' => __( 'Credit Card', EDD_BRAINTREE_DROPIN_DOMAIN )
 			);
@@ -105,7 +144,7 @@ class EDD_Braintree_Dropin {
 	public function add_settings( $settings ) {
 
 		return array_merge( $settings, array(
-				'braintree_dropin' => array(
+				EDD_BRAINTREE_DROPIN_GATEWAY_ID => array(
 					array(
 						'id'   => 'edd_braintree_dropin_header',
 						'name' => '<strong>' . __( 'Braintree Settings', EDD_BRAINTREE_DROPIN_DOMAIN ) . '</strong>',
@@ -155,8 +194,21 @@ class EDD_Braintree_Dropin {
 	 * @return array
 	 */
 	public function settings_section( $sections ) {
-		$sections['braintree_dropin'] = __( 'Braintree Drop-In', EDD_BRAINTREE_DROPIN_DOMAIN );
+		$sections[EDD_BRAINTREE_DROPIN_GATEWAY_ID] = __( 'Braintree Drop-In', EDD_BRAINTREE_DROPIN_DOMAIN );
 		return $sections;
+	}
+
+	/**
+	 * Add js scripts
+	 *
+	 * @since 1.0.0
+	 */
+	public function scripts() {
+		if ( ! edd_is_checkout() ) {
+			return false;
+		}
+
+		wp_enqueue_script( 'edd-braintree-dropin-checkout-script', plugins_url( '/assets/js/', __FILE__ ) . 'edd_braintree_dropin.js', array('jquery'), '1.0.0', false );
 	}
 
 	/**
