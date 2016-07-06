@@ -169,10 +169,6 @@ class EDD_Braintree_Dropin {
 
 		$result = Braintree_Transaction::sale( $payment_data );
 
-		// echo '<pre>';
-		// var_dump( $payment_data );
-		// die();
-
 		if ( $result->success ) {
 			edd_update_payment_status( $payment_id, 'complete' );
 			edd_set_payment_transaction_id( $payment_id, $result->transaction->id );
