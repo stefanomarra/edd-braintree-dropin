@@ -21,60 +21,380 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 
-/**
-  * Define some variables
-  */
+// Exit if accessed directly
+if ( !defined('ABSPATH') ) exit;
+
+require_once __DIR__ . '/braintree/lib/autoload.php';
+
+// Define some variables
 define('EDD_BRAINTREE_DROPIN_DOMAIN', 'edd-braintree-dropin');
+define('EDD_BRAINTREE_DROPIN_GATEWAY_ID', 'braintree_dropin');
 
-/**
- * Actions
- */
-add_action( 'admin_init', 'edd_braintree_dropin_check_requirements' );
+class EDD_Braintree_Dropin {
 
+	private static $instance;
 
+	private $merchant_id;
+	private $merchant_account_id;
+	private $public_key;
+	private $private_key;
 
+	/**
+	 * Get object instance
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return object
+	 */
+	public static function get_instance() {
+		if ( ! self::$instance ) {
+			self::$instance = new EDD_Braintree_Dropin();
+		}
 
-/**
- * Check for required plugins and versions
- *
- * @since 1.0.0
- * @return bool
- */
-function edd_braintree_dropin_check_requirements() {
-	global $wp_version;
+		return self::$instance;
+	}
 
-	if ( version_compare( $wp_version, '4.2', '<' ) ) {
-		add_action( 'admin_notices', 'edd_braintree_dropin_wp_notice' );
+	/**
+	 * Construct
+	 *
+	 * @since 1.0.0
+	 */
+	public function __construct() {
+
+		if ( ! $this->check_requirements() ) {
+			return false;
+		}
+
+		$this->merchant_id         = edd_get_option( 'edd_braintree_dropin_merchant_id', '' );
+		$this->merchant_account_id = edd_get_option( 'edd_braintree_dropin_merchant_account_id', '' );
+		$this->public_key          = edd_get_option( 'edd_braintree_dropin_public_key', '' );
+		$this->private_key         = edd_get_option( 'edd_braintree_dropin_private_key', '' );
+
+		add_filter( 'edd_payment_gateways', array( $this, 'register_gateway') );
+		add_filter( 'edd_settings_gateways', array( $this, 'add_settings' ) );
+
+		if ( edd_is_gateway_active(EDD_BRAINTREE_DROPIN_GATEWAY_ID) ) {
+			add_filter( 'edd_settings_sections_gateways', array( $this, 'settings_section' ) );
+
+			add_action( 'edd_' . EDD_BRAINTREE_DROPIN_GATEWAY_ID . '_cc_form', array( $this, 'payment_form' ) );
+			add_action( 'edd_gateway_' . EDD_BRAINTREE_DROPIN_GATEWAY_ID, array( $this, 'process_payment' ) );
+			add_action( 'wp_enqueue_scripts', array( $this, 'scripts' ) );
+
+			add_filter( 'edd_purchase_form_required_fields', array( $this, 'required_checkout_fields' ) );
+
+		}
+	}
+
+	/**
+	 * Process Payment
+	 *
+	 * @param $purchase_data
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return void
+	 */
+	public function process_payment( $purchase_data ) {
+		if ( ! wp_verify_nonce( $purchase_data['gateway_nonce'], 'edd-gateway' ) ) {
+			wp_die( __( 'Nonce verification has failed', 'easy-digital-downloads' ), __( 'Error', 'easy-digital-downloads' ), array( 'response' => 403 ) );
+		}
+
+		edd_clear_errors();
+
+		$payment = array(
+			'price'        => $purchase_data['price'],
+			'date'         => $purchase_data['date'],
+			'user_email'   => $purchase_data['user_email'],
+			'purchase_key' => $purchase_data['purchase_key'],
+			'currency'     => edd_get_currency(),
+			'downloads'    => $purchase_data['downloads'],
+			'cart_details' => $purchase_data['cart_details'],
+			'user_info'    => $purchase_data['user_info'],
+			'gateway'      => EDD_BRAINTREE_DROPIN_GATEWAY_ID,
+			'status'       => 'pending',
+		);
+
+		$payment_id = edd_insert_payment( $payment );
+
+		$payment_data = array(
+			'amount'   => $purchase_data['price'],
+			'merchantAccountId'  => $this->merchant_account_id,
+			'paymentMethodNonce' => $purchase_data['post_data']['payment_method_nonce'],
+			'options'  => array(
+				'submitForSettlement' => apply_filters( 'edd_braintree_dropin_submit_for_settlement', true )
+			),
+			'customer' => array(
+				'firstName' => $purchase_data['user_info']['first_name'],
+				'lastName'  => $purchase_data['user_info']['last_name'],
+				'email'     => $purchase_data['user_email']
+			),
+			'billing'  => array(
+				'firstName'         => $purchase_data['user_info']['first_name'],
+				'lastName'          => $purchase_data['user_info']['last_name'],
+				'streetAddress'     => $purchase_data['card_info']['card_address'],
+				'extendedAddress'   => $purchase_data['card_info']['card_address_2'],
+				'locality'          => $purchase_data['card_info']['card_city'],
+				'region'            => $purchase_data['card_info']['card_state'],
+				'postalCode'        => $purchase_data['card_info']['card_zip'],
+				'countryCodeAlpha2' => $purchase_data['card_info']['card_country'],
+			)
+		);
+
+		$result = $this->process_raw_payment( $payment_data, $payment_id, $purchase_data );
+
+		if ( ! isset( $result ) || ! $result ) {
+			edd_send_back_to_checkout( '?payment-mode=' . $purchase_data['post_data']['edd-gateway'] );
+		}
+
+		edd_send_to_success_page();
+	}
+
+	/**
+	 * Process Raw Payment
+	 *
+	 * @param array $payment_data
+	 * @param int $payment_id
+	 * @param array $purchase_data
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return bool
+	 */
+	public function process_raw_payment( $payment_data, $payment_id, $purchase_data ) {
+
+		Braintree_Configuration::environment( edd_is_test_mode() ? 'sandbox' : 'production' );
+		Braintree_Configuration::merchantId( $this->merchant_id );
+		Braintree_Configuration::publicKey( $this->public_key );
+		Braintree_Configuration::privateKey( $this->private_key );
+
+		$result = Braintree_Transaction::sale( $payment_data );
+
+		// echo '<pre>';
+		// var_dump( $payment_data );
+		// die();
+
+		if ( $result->success ) {
+			edd_update_payment_status( $payment_id, 'complete' );
+			edd_set_payment_transaction_id( $payment_id, $result->transaction->id );
+
+			return true;
+		}
+		else if ( $result->transaction ) {
+			$error = sprintf( __( 'Transaction Failed. %s (%)', EDD_BRAINTREE_DROPIN_DOMAIN ), $result->transaction->processorResponseText, $result->transaction->processorResponseCode );
+			edd_set_error( 'braintree_error', $error );
+		}
+		else {
+			$exclude = array( 81725 );
+			foreach ( ( $result->errors->deepAll() ) as $error ) {
+				if ( ! in_array( $error->code, $exclude ) ) {
+					edd_set_error( 'braintree_error', $error->message );
+				}
+			}
+		}
+
 		return false;
 	}
-	else if ( ! class_exists( 'Easy_Digital_Downloads' ) || version_compare( EDD_VERSION, '2.5', '<' ) ) {
-		add_action( 'admin_notices', 'edd_braintree_dropin_edd_notice' );
-		return false;
+
+	/**
+	 * Payment Form
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return void
+	 */
+	public function payment_form() {
+		Braintree_Configuration::environment( edd_is_test_mode() ? 'sandbox' : 'production' );
+		Braintree_Configuration::merchantId( $this->merchant_id );
+		Braintree_Configuration::publicKey( $this->public_key );
+		Braintree_Configuration::privateKey( $this->private_key );
+
+		include __DIR__ . '/templates/checkout.php';
+	}
+
+	/**
+	 * Required checkout fields
+	 *
+	 * @param $required_fields
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function required_checkout_fields( $required_fields ) {
+		$required_fields = array(
+			'payment_method_nonce' => array(
+				'error_id'      => 'nonce_invalid',
+				'error_message' => 'No Payment Method Selected'
+			)
+		);
+		return $required_fields;
+	}
+
+	/**
+	 * Register "braintree_dropin" gateway
+	 *
+	 * @param array $gateways
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function register_gateway( $gateways ) {
+
+		$gateways[EDD_BRAINTREE_DROPIN_GATEWAY_ID] = array(
+				'admin_label'    => 'Braintree Drop-In',
+				'checkout_label' => __( 'Credit Card', EDD_BRAINTREE_DROPIN_DOMAIN )
+			);
+
+		return $gateways;
+	}
+
+	/**
+	 * Add EDD Braintree Settings
+	 *
+	 * @param array $settings
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function add_settings( $settings ) {
+
+		return array_merge( $settings, array(
+				EDD_BRAINTREE_DROPIN_GATEWAY_ID => array(
+					array(
+						'id'   => 'edd_braintree_dropin_header',
+						'name' => '<strong>' . __( 'Braintree Settings', EDD_BRAINTREE_DROPIN_DOMAIN ) . '</strong>',
+						'desc' => __( 'Configure Braintree payment gateway', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'header'
+					),
+					array(
+						'id'   => 'edd_braintree_dropin_merchant_id',
+						'name' => __( 'Merchant ID', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'desc' => __( 'Enter your Merchant ID.', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'text',
+						'size' => 'regular',
+					),
+					array(
+						'id'   => 'edd_braintree_dropin_merchant_account_id',
+						'name' => __( 'Merchant Account ID', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'desc' => __( 'Enter your Merchant Account ID.', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'text',
+						'size' => 'regular',
+					),
+					array(
+						'id'   => 'edd_braintree_dropin_public_key',
+						'name' => __( 'Public Key', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'desc' => __( 'Enter your Public Key.', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'text',
+						'size' => 'regular',
+					),
+					array(
+						'id'   => 'edd_braintree_dropin_private_key',
+						'name' => __( 'Private Key', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'desc' => __( 'Enter your Private Key.', EDD_BRAINTREE_DROPIN_DOMAIN ),
+						'type' => 'text',
+						'size' => 'regular',
+					)
+				)
+			)
+		);
+	}
+
+	/**
+	 * Add EDD Settings Section
+	 *
+	 * @param array $sections
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function settings_section( $sections ) {
+		$sections[EDD_BRAINTREE_DROPIN_GATEWAY_ID] = __( 'Braintree Drop-In', EDD_BRAINTREE_DROPIN_DOMAIN );
+		return $sections;
+	}
+
+	/**
+	 * Add js scripts
+	 *
+	 * @since 1.0.0
+	 */
+	public function scripts() {
+		if ( ! edd_is_checkout() ) {
+			return false;
+		}
+
+		Braintree_Configuration::environment( edd_is_test_mode() ? 'sandbox' : 'production' );
+		Braintree_Configuration::merchantId( $this->merchant_id );
+		Braintree_Configuration::publicKey( $this->public_key );
+		Braintree_Configuration::privateKey( $this->private_key );
+
+		wp_register_script( 'edd-braintree-dropin-checkout-script', plugins_url( '/assets/js/', __FILE__ ) . 'edd_braintree_dropin.js', array('jquery'), '1.0.0', false);
+
+		$braintree_config = array(
+			'client_token' => Braintree_ClientToken::generate(),
+			'gateway_id'   => EDD_BRAINTREE_DROPIN_GATEWAY_ID,
+			'development'  => edd_is_test_mode() ? true : false
+		);
+		wp_localize_script( 'edd-braintree-dropin-checkout-script', 'braintree_config', $braintree_config );
+
+		wp_enqueue_script( 'braintree-js', 'https://js.braintreegateway.com/v2/braintree.js', array(), false );
+		wp_enqueue_script( 'edd-braintree-dropin-checkout-script' );
+	}
+
+	/**
+	 * Check for required plugins and versions
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return bool
+	 */
+	private function check_requirements() {
+		global $wp_version;
+
+		if ( version_compare( $wp_version, '4.2', '<' ) ) {
+			add_action( 'admin_notices', array( $this, 'wp_notice' ) );
+			return false;
+		}
+		else if ( ! class_exists( 'Easy_Digital_Downloads' ) || version_compare( EDD_VERSION, '2.5', '<' ) ) {
+			add_action( 'admin_notices', array( $this, 'edd_notice' ) );
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Braintree WP version notice
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return void
+	 */
+	public function edd_notice() { ?>
+		<div class="updated">
+			<p><?php _e( '<strong>Notice:</strong> Easy Digital Downloads Braintree Drop-In requires Easy Digital Downloads 2.5 or higher', EDD_BRAINTREE_DROPIN_DOMAIN ); ?></p>
+		</div>
+	<?php
+	}
+
+	/**
+	 * Braintree WP version notice
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return void
+	 */
+	public function wp_notice() { ?>
+		<div class="updated">
+			<p><?php _e( '<strong>Notice:</strong> Easy Digital Downloads Braintree Drop-In requires Wordpress 4.2 or higher', EDD_BRAINTREE_DROPIN_DOMAIN ); ?></p>
+		</div>
+	<?php
 	}
 }
 
-/**
- * Braintree WP version notice
- *
- * @since 1.0.0
- * @return void
- */
-function edd_braintree_dropin_edd_notice() { ?>
-	<div class="updated">
-		<p><?php _e( '<strong>Notice:</strong> Easy Digital Downloads Braintree Drop-In requires Easy Digital Downloads 2.5 or higher', EDD_BRAINTREE_DROPIN_DOMAIN ); ?></p>
-	</div>
-<?php
+function edd_braintree_dropin_load_plugin() {
+	EDD_Braintree_Dropin::get_instance();
 }
-
-/**
- * Braintree WP version notice
- *
- * @since 1.0.0
- * @return void
- */
-function edd_braintree_dropin_wp_notice() { ?>
-	<div class="updated">
-		<p><?php _e( '<strong>Notice:</strong> Easy Digital Downloads Braintree Drop-In requires Wordpress 4.2 or higher', EDD_BRAINTREE_DROPIN_DOMAIN ); ?></p>
-	</div>
-<?php
-}
+add_action( 'plugins_loaded', 'edd_braintree_dropin_load_plugin' );
