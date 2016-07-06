@@ -65,19 +65,23 @@ class EDD_Braintree_Dropin {
 			return false;
 		}
 
-		add_filter( 'edd_payment_gateways', array( $this, 'register_gateway') );
-		add_filter( 'edd_settings_gateways', array( $this, 'add_settings' ) );
-		add_filter( 'edd_settings_sections_gateways', array( $this, 'settings_section' ) );
-
 		$this->merchant_id         = edd_get_option( 'edd_braintree_dropin_merchant_id', '' );
 		$this->merchant_account_id = edd_get_option( 'edd_braintree_dropin_merchant_account_id', '' );
 		$this->public_key          = edd_get_option( 'edd_braintree_dropin_public_key', '' );
 		$this->private_key         = edd_get_option( 'edd_braintree_dropin_private_key', '' );
 
+		add_filter( 'edd_payment_gateways', array( $this, 'register_gateway') );
+		add_filter( 'edd_settings_gateways', array( $this, 'add_settings' ) );
+
 		if ( edd_is_gateway_active(EDD_BRAINTREE_DROPIN_GATEWAY_ID) ) {
+			add_filter( 'edd_settings_sections_gateways', array( $this, 'settings_section' ) );
+
 			add_action( 'edd_' . EDD_BRAINTREE_DROPIN_GATEWAY_ID . '_cc_form', array( $this, 'payment_form' ) );
 			add_action( 'edd_gateway_' . EDD_BRAINTREE_DROPIN_GATEWAY_ID, array( $this, 'process_payment' ) );
 			add_action( 'wp_enqueue_scripts', array( $this, 'scripts' ) );
+
+			add_filter( 'edd_purchase_form_required_fields', array( $this, 'required_checkout_fields' ) );
+
 		}
 	}
 
@@ -110,7 +114,25 @@ class EDD_Braintree_Dropin {
 		Braintree_Configuration::privateKey( $this->private_key );
 
 		include __DIR__ . '/templates/checkout.php';
-		// edd_get_cc_form();
+	}
+
+	/**
+	 * Required checkout fields
+	 *
+	 * @param $required_fields
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return array
+	 */
+	public function required_checkout_fields( $required_fields ) {
+		$required_fields = array(
+			'payment_method_nonce' => array(
+				'error_id'      => 'nonce_invalid',
+				'error_message' => 'No Payment Method Selected'
+			)
+		);
+		return $required_fields;
 	}
 
 	/**
@@ -208,7 +230,22 @@ class EDD_Braintree_Dropin {
 			return false;
 		}
 
-		wp_enqueue_script( 'edd-braintree-dropin-checkout-script', plugins_url( '/assets/js/', __FILE__ ) . 'edd_braintree_dropin.js', array('jquery'), '1.0.0', false );
+		Braintree_Configuration::environment( edd_is_test_mode() ? 'sandbox' : 'production' );
+		Braintree_Configuration::merchantId( $this->merchant_id );
+		Braintree_Configuration::publicKey( $this->public_key );
+		Braintree_Configuration::privateKey( $this->private_key );
+
+		wp_register_script( 'edd-braintree-dropin-checkout-script', plugins_url( '/assets/js/', __FILE__ ) . 'edd_braintree_dropin.js', array('jquery'), '1.0.0', false);
+
+		$braintree_config = array(
+			'client_token' => Braintree_ClientToken::generate(),
+			'gateway_id'   => EDD_BRAINTREE_DROPIN_GATEWAY_ID,
+			'development'  => edd_is_test_mode() ? true : false
+		);
+		wp_localize_script( 'edd-braintree-dropin-checkout-script', 'braintree_config', $braintree_config );
+
+		wp_enqueue_script( 'braintree-js', 'https://js.braintreegateway.com/v2/braintree.js', array(), false );
+		wp_enqueue_script( 'edd-braintree-dropin-checkout-script' );
 	}
 
 	/**

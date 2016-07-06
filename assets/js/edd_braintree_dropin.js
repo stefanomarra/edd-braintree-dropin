@@ -1,82 +1,28 @@
 var $ = jQuery.noConflict();
 
-function Checkout(config){
-	this.config = config;
-	this.config.development = config.development || false;
+$(document).ready(function() {
 
-	this.paymentForm = $('#' + config.formID);
-	this.inputs = jQuery('input[type=text], input[type=email], input[type=tel]');
-	this.button = this.paymentForm.find('.button');
-
-	this.states = {
-		'show' : 'active',
-		'wait' : 'loading'
-	};
-	this.focusClass = "has-focus";
-	this.valueClass = "has-value";
-
-	this.initialize();
-}
-
-Checkout.prototype.initialize = function(){
-	var self = this;
-
-	this.events();
-	this.inputs.each(function(index, element){
-		self.labelHander($(element));
+	var client_token = braintree_config.client_token;
+	braintree.setup(client_token, 'dropin', {
+		container: 'edd_braintree_dropin_container',
+		form: 'edd_purchase_form'
 	});
-	this.notify('error');
-};
 
+	$(document).on('click', '#edd-purchase-button', function(e) {
+		var purchase_form = document.getElementById('edd_purchase_form');
 
-Checkout.prototype.events = function(){
-	var self = this;
+		console.log( purchase_form.checkValidity() );
 
-	this.inputs.on('focus', function(){
-			$(this).closest('label').addClass(self.focusClass);
-			self.labelHander($(this));
-		}).on('keydown', function(){
-			self.labelHander($(this));
-		}).on('blur', function(){
-			$(this).closest('label').removeClass(self.focusClass);
-			self.labelHander($(this));
-	});
-};
-
-
-Checkout.prototype.labelHander = function(element){
-	var self = this;
-	var input = element;
-	var label = input.closest('label');
-
-	window.setTimeout(function(){
-		var hasValue = (input.val().length > 0) ? true : false ;
-
-		if (hasValue) {
-			label.addClass(self.valueClass);
-		} else {
-			label.removeClass(self.valueClass);
+		if ( typeof purchase_form.checkValidity === "function" && false === purchase_form.checkValidity() && $('[name="payment_method_nonce"]').val() != '' ) {
+			e.preventDefault();
+			return false;
 		}
-	}, 10);
-};
+		else {
+			var e = document.createEvent('Event');
+			e.initEvent('submit', true, true);
+			purchase_form.dispatchEvent(e);
+		}
 
+	});
+});
 
-Checkout.prototype.notify = function(status){
-	var self = this;
-	var notice = $('.notice-' + status );
-	var delay = (this.config.development === true) ? 4000 : 2000;
-
-	notice.show()
-
-	window.setTimeout(function(){
-		notice.addClass('show');
-		self.button.removeClass(self.states.wait);
-
-		window.setTimeout(function(){
-			notice.removeClass('show');
-			window.setTimeout(function(){
-				notice.hide();
-			}, 310);
-		}, delay);
-	}, 10);
-};
