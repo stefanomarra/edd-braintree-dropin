@@ -95,9 +95,104 @@ class EDD_Braintree_Dropin {
 	 * @return void
 	 */
 	public function process_payment( $purchase_data ) {
-		echo '<pre>';
-		var_dump( $purchase_data );
-		die();
+		if ( ! wp_verify_nonce( $purchase_data['gateway_nonce'], 'edd-gateway' ) ) {
+			wp_die( __( 'Nonce verification has failed', 'easy-digital-downloads' ), __( 'Error', 'easy-digital-downloads' ), array( 'response' => 403 ) );
+		}
+
+		edd_clear_errors();
+
+		$payment = array(
+			'price'        => $purchase_data['price'],
+			'date'         => $purchase_data['date'],
+			'user_email'   => $purchase_data['user_email'],
+			'purchase_key' => $purchase_data['purchase_key'],
+			'currency'     => edd_get_currency(),
+			'downloads'    => $purchase_data['downloads'],
+			'cart_details' => $purchase_data['cart_details'],
+			'user_info'    => $purchase_data['user_info'],
+			'gateway'      => EDD_BRAINTREE_DROPIN_GATEWAY_ID,
+			'status'       => 'pending',
+		);
+
+		$payment_id = edd_insert_payment( $payment );
+
+		$payment_data = array(
+			'amount'   => $purchase_data['price'],
+			'merchantAccountId'  => $this->merchant_account_id,
+			'paymentMethodNonce' => $purchase_data['post_data']['payment_method_nonce'],
+			'options'  => array(
+				'submitForSettlement' => apply_filters( 'edd_braintree_dropin_submit_for_settlement', true )
+			),
+			'customer' => array(
+				'firstName' => $purchase_data['user_info']['first_name'],
+				'lastName'  => $purchase_data['user_info']['last_name'],
+				'email'     => $purchase_data['user_email']
+			),
+			'billing'  => array(
+				'firstName'         => $purchase_data['user_info']['first_name'],
+				'lastName'          => $purchase_data['user_info']['last_name'],
+				'streetAddress'     => $purchase_data['card_info']['card_address'],
+				'extendedAddress'   => $purchase_data['card_info']['card_address_2'],
+				'locality'          => $purchase_data['card_info']['card_city'],
+				'region'            => $purchase_data['card_info']['card_state'],
+				'postalCode'        => $purchase_data['card_info']['card_zip'],
+				'countryCodeAlpha2' => $purchase_data['card_info']['card_country'],
+			)
+		);
+
+		$result = $this->process_raw_payment( $payment_data, $payment_id, $purchase_data );
+
+		if ( ! isset( $result ) || ! $result ) {
+			edd_send_back_to_checkout( '?payment-mode=' . $purchase_data['post_data']['edd-gateway'] );
+		}
+
+		edd_send_to_success_page();
+	}
+
+	/**
+	 * Process Raw Payment
+	 *
+	 * @param array $payment_data
+	 * @param int $payment_id
+	 * @param array $purchase_data
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return bool
+	 */
+	public function process_raw_payment( $payment_data, $payment_id, $purchase_data ) {
+
+		Braintree_Configuration::environment( edd_is_test_mode() ? 'sandbox' : 'production' );
+		Braintree_Configuration::merchantId( $this->merchant_id );
+		Braintree_Configuration::publicKey( $this->public_key );
+		Braintree_Configuration::privateKey( $this->private_key );
+
+		$result = Braintree_Transaction::sale( $payment_data );
+
+		// echo '<pre>';
+		// var_dump( $payment_data );
+		// die();
+
+		if ( $result->success ) {
+			edd_update_payment_status( $payment_id, 'complete' );
+			edd_set_payment_transaction_id( $payment_id, $result->transaction->id );
+
+			return true;
+		}
+		else if ( $result->transaction ) {
+			$error = sprintf( __( 'Transaction Failed. %s (%)', EDD_BRAINTREE_DROPIN_DOMAIN ), $result->transaction->processorResponseText, $result->transaction->processorResponseCode );
+			edd_set_error( 'braintree_error', $error );
+		}
+		else {
+			$exclude = array( 81725 );
+			foreach ( ( $result->errors->deepAll() ) as $error ) {
+				if ( ! in_array( $error->code, $exclude ) ) {
+					edd_set_error( 'braintree_error', $error->message );
+				}
+			}
+		}
+
+		return false;
 	}
 
 	/**
