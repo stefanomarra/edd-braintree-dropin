@@ -2,10 +2,14 @@ var $ = jQuery.noConflict();
 
 $(document).ready(function() {
 
+	var edd_braintree_dropin_checkout;
 	var client_token = braintree_config.client_token;
 	braintree.setup(client_token, 'dropin', {
 		container: 'edd_braintree_dropin_container',
-		form: 'edd_purchase_form'
+		form: 'edd_purchase_form',
+		onReady: function(integration) {
+			edd_braintree_dropin_checkout = integration;
+		}
 	});
 
 	$(document).on('click', '#edd-purchase-button', function(e) {
