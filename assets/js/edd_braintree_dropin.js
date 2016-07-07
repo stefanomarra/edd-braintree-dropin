@@ -2,10 +2,6 @@ var $ = jQuery.noConflict();
 
 $(document).ready(function() {
 
-	$('.required').each(function() {
-		$(this).attr('required');
-	});
-
 	var client_token = braintree_config.client_token;
 	braintree.setup(client_token, 'dropin', {
 		container: 'edd_braintree_dropin_container',
