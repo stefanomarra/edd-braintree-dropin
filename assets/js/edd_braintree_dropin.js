@@ -9,20 +9,35 @@ $(document).ready(function() {
 		form: 'edd_purchase_form',
 		onReady: function(integration) {
 			edd_braintree_dropin_checkout = integration;
+		},
+		onPaymentMethodReceived: function(payload) {
+			$('#edd_purchase_form').append('<input type="hidden" name="payment_method_nonce" value="' + payload.nonce + '" />');
+
+			setTimeout(function() {
+				$('#edd-purchase-button').click();
+			}, 1000);
 		}
 	});
 
 	$(document).on('click', '#edd-purchase-button', function(e) {
 		var purchase_form = document.getElementById('edd_purchase_form');
 
-		if ( $('[name="payment_method_nonce"]').val() != '' ) {
+		if ( $('[name="payment_method_nonce"]').length == 0 ) {
 			e.preventDefault();
-			return false;
+			var e = document.createEvent('Event');
+			e.initEvent('submit', true, true);
+			purchase_form.dispatchEvent(e);
 		}
-
-		var e = document.createEvent('Event');
-		e.initEvent('submit', true, true);
-		purchase_form.dispatchEvent(e);
 	});
+
+	$(document).ajaxComplete(function( event, xhr, settings ) {
+		if ( $(xhr.responseText).find('#edd_error_nonce_invalid').length > 0 ) {
+			$('#edd_error_nonce_invalid').remove();
+			if ( $('.edd_errors .edd_error').length == 0 ) {
+				$('.edd_errors').remove();
+			}
+		}
+	});
+
 });
 
